@@ -30,11 +30,12 @@ const fetchLinkText = async (rawUrl: string): Promise<string> => {
 };
 
 export class AiService {
-  private readonly model = process.env.AI_MODEL || 'nova-2-lite';
+  private readonly model = process.env.AI_MODEL || 'claude-sonnet-4-6';
 
   async analyzePost(title: string, category: string, content: string): Promise<AnalyzeResult> {
     const response = await aiClient.chat.completions.create({ model: this.model, messages: [
-      { role: 'user', content: `GUHAM 포스팅에서 제공 역량(GIVE)과 필요한 역량(NEED)을 표준 기술 태그로 추출한다. JSON만 반환한다: {"giveTags":string[],"needTags":string[],"summary":string}\n\n제목: ${title}\n카테고리: ${category}\n내용: ${content}` },
+      { role: 'system', content: 'GUHAM 포스팅에서 제공 역량(GIVE)과 필요한 역량(NEED)을 표준 기술 태그로 추출한다. JSON만 반환한다: {"giveTags":string[],"needTags":string[],"summary":string}' },
+      { role: 'user', content: `제목: ${title}\n카테고리: ${category}\n내용: ${content}` },
     ], response_format: { type: 'json_object' } });
     return parseJson<AnalyzeResult>(response.choices[0]?.message.content ?? '{}');
   }
@@ -42,7 +43,8 @@ export class AiService {
   async normalizeProfile(customGiveText = '', customInterestText = ''): Promise<{ normalizedGiveTags: string[]; normalizedInterestTags: string[] }> {
     if (!customGiveText.trim() && !customInterestText.trim()) return { normalizedGiveTags: [], normalizedInterestTags: [] };
     const response = await aiClient.chat.completions.create({ model: this.model, messages: [
-      { role: 'user', content: `사용자의 자유 입력을 간결한 한국어/영문 표준 태그로 정규화한다. JSON만 반환한다: {"normalizedGiveTags":string[],"normalizedInterestTags":string[]}\n\nGIVE: ${customGiveText}\n관심 분야: ${customInterestText}` },
+      { role: 'system', content: '사용자의 자유 입력을 간결한 한국어/영문 표준 태그로 정규화한다. JSON만 반환한다: {"normalizedGiveTags":string[],"normalizedInterestTags":string[]}' },
+      { role: 'user', content: `GIVE: ${customGiveText}\n관심 분야: ${customInterestText}` },
     ], response_format: { type: 'json_object' } });
     return parseJson(response.choices[0]?.message.content ?? '{}');
   }
@@ -72,7 +74,8 @@ export class AiService {
     const response = await aiClient.chat.completions.create({
       model: this.model,
       messages: [
-        { role: 'user', content: `두 텍스트의 팀 프로젝트 역량/관심 분야 의미 유사도를 0~1 사이 숫자로 평가한다. JSON만 반환한다: {"score":number}\n\n텍스트 A:\n${left}\n\n텍스트 B:\n${right}` },
+        { role: 'system', content: '두 텍스트의 팀 프로젝트 역량/관심 분야 의미 유사도를 0~1 사이 숫자로 평가한다. JSON만 반환한다: {"score":number}' },
+        { role: 'user', content: `텍스트 A:\n${left}\n\n텍스트 B:\n${right}` },
       ],
       response_format: { type: 'json_object' },
     });
