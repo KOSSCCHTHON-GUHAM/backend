@@ -122,12 +122,12 @@ router.post('/', (req, res) => boardController.createBoard(req, res));
  *         name: jobField
  *         schema:
  *           type: string
- *         description: 직무 필터 (예: Frontend, Backend, AI)
+ *         description: '직무 필터 (예: Frontend, Backend, AI)'
  *       - in: query
  *         name: category
  *         schema:
  *           type: string
- *         description: 분야 필터 (예: IT/AI, ESG)
+ *         description: '분야 필터 (예: IT/AI, ESG)'
  *       - in: query
  *         name: page
  *         schema:
