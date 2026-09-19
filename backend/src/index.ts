@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerSpec } from './config/swagger';
 
 // Routes
 import authRoutes from './routes/auth.routes';
@@ -15,6 +17,11 @@ const PORT = process.env.PORT || 3000;
 // ────────────────────────────────────────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ────────────────────────────────────────────────────────────────────
+// Swagger UI Docs
+// ────────────────────────────────────────────────────────────────────
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // ────────────────────────────────────────────────────────────────────
 // Health Check
@@ -43,6 +50,7 @@ app.use((_req, res) => {
 // ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on http://localhost:${PORT}`);
+  console.log(`📑 Swagger Docs available at http://localhost:${PORT}/api-docs`);
   console.log(`📌 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log('');
   console.log('📍 Registered Routes:');
