@@ -96,7 +96,7 @@ export class AiService {
   /**
    * OpenAI Chat Completions API 직접 호출 (기존 기능 유지)
    */
-  async chat(message: string, model: string = 'gpt-4o-mini'): Promise<ChatResult> {
+  async chat(message: string, model: string = process.env.AI_MODEL || 'nova-2-lite'): Promise<ChatResult> {
     const response = await aiClient.chat.completions.create({
       model,
       messages: [{ role: 'user', content: message }],
