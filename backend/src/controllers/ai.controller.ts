@@ -1,122 +1,55 @@
 import { Request, Response } from 'express';
 import { AiService } from '../services/ai.service';
+import { RecommendationService } from '../services/recommendation.service';
 
-const aiService = new AiService();
-
-/**
- * AI Controller
- * - AI 매칭·분석 관련 요청을 처리합니다.
- * - 현재는 스켈레톤 구조만 구성되어 있으며, 추후 실제 AI API를 연동합니다.
- */
 export class AiController {
-  /**
-   * GET /api/ai/recommend
-   * AI 기반 GIVE/NEED 맞춤형 사용자 추천
-   *
-   * @query { userId?: string, limit?: number }
-   * @returns { success: boolean, recommendations: RecommendationDto[] }
-   */
-  async recommend(req: Request, res: Response): Promise<void> {
-    try {
-      const { userId, limit = 5 } = req.query;
+  private readonly ai = new AiService();
+  private readonly recommendation = new RecommendationService(this.ai);
 
-      // TODO: 인증 미들웨어에서 현재 로그인 사용자 ID 추출
-      // TODO: 사용자의 GIVE/NEED 프로필 데이터 조회
-      // TODO: AiService.getRecommendations() 호출
-
-      const result = await aiService.getRecommendations(
-        String(userId ?? 'anonymous'),
-        Number(limit),
-      );
-
-      res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (error) {
-      console.error('[AiController.recommend] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      });
-    }
+  async recommendBoards(req: Request, res: Response): Promise<void> {
+    const page = Math.max(1, Number(req.query.page) || 1); const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+    const all = await this.recommendation.boardsForUser(req.user!.id, page * limit, req.query.category ? String(req.query.category) : undefined, req.query.keyword ? String(req.query.keyword) : undefined);
+    res.json({ boards: all.slice((page - 1) * limit, page * limit), total: all.length, page, hasNext: page * limit < all.length });
   }
 
-  /**
-   * POST /api/ai/analyze
-   * 작성된 GIVE/NEED 텍스트를 AI로 분석하여 키워드 추출
-   *
-   * @body { text: string, type: 'GIVE' | 'NEED' }
-   * @returns { success: boolean, keywords: string[], summary: string }
-   */
+  async recommendUsers(req: Request, res: Response): Promise<void> {
+    const boardId = String(req.query.boardId ?? ''); const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    if (!boardId) { res.status(400).json({ success: false, error: 'boardId가 필요합니다.' }); return; }
+    const recommendations = await this.recommendation.usersForBoard(boardId, req.user!.id, limit);
+    if (!recommendations) { res.status(404).json({ success: false, error: '본인이 작성한 포스팅을 찾을 수 없습니다.' }); return; }
+    res.json({ recommendations });
+  }
+
   async analyze(req: Request, res: Response): Promise<void> {
-    try {
-      const { text, type } = req.body;
-
-      if (!text || typeof text !== 'string') {
-        res.status(400).json({
-          success: false,
-          error: 'text 필드는 필수입니다.',
-        });
-        return;
-      }
-
-      // TODO: 입력 텍스트 길이 제한 검사
-      // TODO: AiService.analyzeText() 호출
-
-      const result = await aiService.analyzeText(text, type);
-
-      res.status(200).json({
-        success: true,
-        data: result,
-      });
-    } catch (error) {
-      console.error('[AiController.analyze] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      });
-    }
+    const { title, category, content } = req.body;
+    if (![title, category, content].every((value) => typeof value === 'string' && value.trim())) { res.status(400).json({ success: false, error: 'title, category, content가 필요합니다.' }); return; }
+    try { res.json(await this.ai.analyzePost(title, category, content)); }
+    catch (error) { res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'AI 분석 실패' }); }
   }
 
-  /**
-   * POST /api/ai/chat  (기존 유지)
-   * AI와 직접 채팅 요청
-   */
+  async draft(req: Request, res: Response): Promise<void> {
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+    let links: string[] = [];
+    try {
+      const parsed = Array.isArray(req.body.links) ? req.body.links : typeof req.body.links === 'string' ? JSON.parse(req.body.links) : [];
+      if (!Array.isArray(parsed) || parsed.some((link) => typeof link !== 'string')) throw new Error();
+      links = parsed.map((link) => link.trim()).filter(Boolean);
+      if (links.some((link) => { try { return !['http:', 'https:'].includes(new URL(link).protocol); } catch { return true; } })) throw new Error();
+    }
+    catch { res.status(400).json({ success: false, error: 'links는 JSON 문자열 배열이어야 합니다.' }); return; }
+    if (!files.length && !links.length) { res.status(400).json({ success: false, error: '사진 또는 링크를 하나 이상 첨부하세요.' }); return; }
+    try { res.json(await this.ai.createDraft(files, links)); }
+    catch (error) { res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'AI 초안 생성 실패' }); }
+  }
+
   async chat(req: Request, res: Response): Promise<void> {
-    try {
-      const { message, model } = req.body;
-
-      if (!message || typeof message !== 'string') {
-        res.status(400).json({ success: false, error: 'message 필드는 필수입니다.' });
-        return;
-      }
-
-      const result = await aiService.chat(message, model);
-      res.json({ success: true, data: result });
-    } catch (error) {
-      console.error('[AiController.chat] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      });
-    }
+    if (!req.body.message) { res.status(400).json({ success: false, error: 'message가 필요합니다.' }); return; }
+    try { res.json({ success: true, data: await this.ai.chat(req.body.message, req.body.model) }); }
+    catch (error) { res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'AI 요청 실패' }); }
   }
 
-  /**
-   * GET /api/ai/models  (기존 유지)
-   * 사용 가능한 AI 모델 목록 반환
-   */
   async listModels(_req: Request, res: Response): Promise<void> {
-    try {
-      const models = await aiService.listModels();
-      res.json({ success: true, data: models });
-    } catch (error) {
-      console.error('[AiController.listModels] Error:', error);
-      res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      });
-    }
+    try { res.json({ success: true, data: await this.ai.listModels() }); }
+    catch (error) { res.status(502).json({ success: false, error: error instanceof Error ? error.message : '모델 조회 실패' }); }
   }
 }
