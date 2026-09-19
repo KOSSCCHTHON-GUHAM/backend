@@ -32,9 +32,21 @@ export class AuthController {
     if (nickname.trim().length < 2 || nickname.trim().length > 10) { res.status(400).json({ success: false, error: 'nickname은 2~10자여야 합니다.' }); return; }
     try {
       const supabase = getSupabase();
+      const admin = getSupabaseAdmin();
       const normalizedEmail = email.trim().toLowerCase();
       const normalizedNickname = nickname.trim();
-      const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password, options: { data: { nickname: normalizedNickname } } });
+      const { data, error } = admin
+        ? await admin.auth.admin.createUser({
+            email: normalizedEmail,
+            password,
+            email_confirm: true,
+            user_metadata: { nickname: normalizedNickname },
+          })
+        : await supabase.auth.signUp({
+            email: normalizedEmail,
+            password,
+            options: { data: { nickname: normalizedNickname } },
+          });
       if (error || !data.user) {
         const duplicate = /already|registered|exists/i.test(error?.message ?? '');
         res.status(duplicate ? 409 : 400).json({ success: false, error: error?.message ?? '회원가입 실패' }); return;
@@ -45,7 +57,7 @@ export class AuthController {
       }
       const profile = { id: data.user.id, email: normalizedEmail, nickname: normalizedNickname, giveFields: [], interests: [], regions: [], normalizedGiveTags: [], normalizedInterestTags: [], onboardingCompleted: false };
       profiles.set(data.user.id, profile);
-      const writer = getSupabaseAdmin() ?? supabase;
+      const writer = admin ?? supabase;
       const { error: profileError } = await writer.from('profiles').upsert({ id: data.user.id, nickname: normalizedNickname, onboarding_completed: false });
       if (profileError) console.warn('[register] profile upsert:', profileError.message);
       res.status(201).json({ user: { id: data.user.id, email: normalizedEmail, nickname: normalizedNickname }, nextAction: 'LOGIN' });
