@@ -3,29 +3,97 @@ import { AiService } from '../services/ai.service';
 
 const aiService = new AiService();
 
+/**
+ * AI Controller
+ * - AI 매칭·분석 관련 요청을 처리합니다.
+ * - 현재는 스켈레톤 구조만 구성되어 있으며, 추후 실제 AI API를 연동합니다.
+ */
 export class AiController {
   /**
-   * POST /api/ai/chat
-   * AI와 채팅 요청을 처리합니다.
+   * GET /api/ai/recommend
+   * AI 기반 GIVE/NEED 맞춤형 사용자 추천
+   *
+   * @query { userId?: string, limit?: number }
+   * @returns { success: boolean, recommendations: RecommendationDto[] }
+   */
+  async recommend(req: Request, res: Response): Promise<void> {
+    try {
+      const { userId, limit = 5 } = req.query;
+
+      // TODO: 인증 미들웨어에서 현재 로그인 사용자 ID 추출
+      // TODO: 사용자의 GIVE/NEED 프로필 데이터 조회
+      // TODO: AiService.getRecommendations() 호출
+
+      const result = await aiService.getRecommendations(
+        String(userId ?? 'anonymous'),
+        Number(limit),
+      );
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error('[AiController.recommend] Error:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Internal server error',
+      });
+    }
+  }
+
+  /**
+   * POST /api/ai/analyze
+   * 작성된 GIVE/NEED 텍스트를 AI로 분석하여 키워드 추출
+   *
+   * @body { text: string, type: 'GIVE' | 'NEED' }
+   * @returns { success: boolean, keywords: string[], summary: string }
+   */
+  async analyze(req: Request, res: Response): Promise<void> {
+    try {
+      const { text, type } = req.body;
+
+      if (!text || typeof text !== 'string') {
+        res.status(400).json({
+          success: false,
+          error: 'text 필드는 필수입니다.',
+        });
+        return;
+      }
+
+      // TODO: 입력 텍스트 길이 제한 검사
+      // TODO: AiService.analyzeText() 호출
+
+      const result = await aiService.analyzeText(text, type);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      console.error('[AiController.analyze] Error:', error);
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Internal server error',
+      });
+    }
+  }
+
+  /**
+   * POST /api/ai/chat  (기존 유지)
+   * AI와 직접 채팅 요청
    */
   async chat(req: Request, res: Response): Promise<void> {
     try {
       const { message, model } = req.body;
 
       if (!message || typeof message !== 'string') {
-        res.status(400).json({
-          success: false,
-          error: 'message 필드는 필수입니다.',
-        });
+        res.status(400).json({ success: false, error: 'message 필드는 필수입니다.' });
         return;
       }
 
       const result = await aiService.chat(message, model);
-
-      res.json({
-        success: true,
-        data: result,
-      });
+      res.json({ success: true, data: result });
     } catch (error) {
       console.error('[AiController.chat] Error:', error);
       res.status(500).json({
@@ -36,16 +104,13 @@ export class AiController {
   }
 
   /**
-   * GET /api/ai/models
-   * 사용 가능한 AI 모델 목록을 반환합니다.
+   * GET /api/ai/models  (기존 유지)
+   * 사용 가능한 AI 모델 목록 반환
    */
   async listModels(_req: Request, res: Response): Promise<void> {
     try {
       const models = await aiService.listModels();
-      res.json({
-        success: true,
-        data: models,
-      });
+      res.json({ success: true, data: models });
     } catch (error) {
       console.error('[AiController.listModels] Error:', error);
       res.status(500).json({
