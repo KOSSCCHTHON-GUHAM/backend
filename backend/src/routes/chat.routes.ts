@@ -1,129 +1,62 @@
 import { Router } from 'express';
 import { ChatController } from '../controllers/chat.controller';
+import { requireAuth } from '../middleware/auth.middleware';
+const router = Router(); const controller = new ChatController(); router.use(requireAuth);
 
-const router = Router();
-const chatController = new ChatController();
-
-/**
- * @swagger
- * tags:
- *   name: Chat
- *   description: 사용자 간 1:1 채팅 API
- */
-
-/**
- * @swagger
+/** @swagger
  * /api/chat/rooms:
  *   post:
- *     summary: 사용자 간 1:1 채팅방 생성
  *     tags: [Chat]
- *     security:
- *       - bearerAuth: []
+ *     summary: 포스팅 상대와 1:1 채팅방 생성 또는 기존 방 반환
+ *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - targetUserId
- *             properties:
- *               targetUserId:
- *                 type: string
- *                 example: target-user-id-123
+ *       content: { application/json: { schema: { type: object, required: [targetUserId, boardId], properties: { targetUserId: { type: string, format: uuid }, boardId: { type: string, format: uuid } } } } }
  *     responses:
- *       201:
- *         description: 채팅방 생성 또는 기존 방 반환 성공
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: '[TODO] 채팅방 생성 로직 미구현'
- *                 data:
- *                   type: object
- *                   properties:
- *                     room:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: string
- *                           example: room-id-placeholder
- *                         participants:
- *                           type: array
- *                           items:
- *                             type: string
- *                           example: ['requester-id-placeholder', 'target-user-id-123']
- *                         createdAt:
- *                           type: string
- *                           example: '2026-09-19T08:00:00.000Z'
- */
-router.post('/rooms', (req, res) => chatController.createRoom(req, res));
-
-/**
- * @swagger
- * /api/chat/rooms/{roomId}:
+ *       200: { description: 기존 채팅방, content: { application/json: { schema: { type: object, properties: { room: { $ref: '#/components/schemas/ChatRoom' }, isNew: { type: boolean, example: false } } } } } }
+ *       201: { description: 새 채팅방, content: { application/json: { schema: { type: object, properties: { room: { $ref: '#/components/schemas/ChatRoom' }, isNew: { type: boolean, example: true } } } } } }
  *   get:
- *     summary: 1:1 채팅방 메시지 내역 조회
  *     tags: [Chat]
- *     security:
- *       - bearerAuth: []
+ *     summary: 내 채팅방 목록·마지막 메시지·안 읽은 개수 조회
+ *     security: [{ bearerAuth: [] }]
  *     parameters:
- *       - in: path
- *         name: roomId
- *         required: true
- *         schema:
- *           type: string
- *         description: 채팅방 ID
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *         description: 페이지 번호
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 50
- *         description: 조회할 메시지 개수
+ *       - { in: query, name: page, schema: { type: integer, default: 1 } }
+ *       - { in: query, name: limit, schema: { type: integer, default: 20 } }
+ *     responses: { 200: { description: 채팅방·상대방·연관 포스팅·마지막 메시지·안 읽은 개수 목록 } }
+ */
+router.post('/rooms', (req, res) => controller.createRoom(req, res));
+router.get('/rooms', (req, res) => controller.listRooms(req, res));
+/** @swagger
+ * /api/chat/rooms/{roomId}/messages:
+ *   get:
+ *     tags: [Chat]
+ *     summary: cursor 기반 과거 메시지 조회 및 재연결 동기화
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: path, name: roomId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: query, name: cursor, schema: { type: string, format: uuid } }
+ *       - { in: query, name: limit, schema: { type: integer, default: 50 } }
  *     responses:
  *       200:
- *         description: 메시지 내역 조회 성공
+ *         description: 채팅방·메시지·nextCursor
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: '[TODO] 채팅 메시지 조회 로직 미구현'
- *                 data:
- *                   type: object
- *                   properties:
- *                     roomId:
- *                       type: string
- *                       example: room-123
- *                     messages:
- *                       type: array
- *                       items:
- *                         type: object
- *                       example: []
- *                     page:
- *                       type: number
- *                       example: 1
- *                     limit:
- *                       type: number
- *                       example: 50
+ *                 room: { $ref: '#/components/schemas/ChatRoom' }
+ *                 messages: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } }
+ *                 nextCursor: { type: string, nullable: true }
+ *       403: { description: 참여자 아님 }
  */
-router.get('/rooms/:roomId', (req, res) => chatController.getRoomMessages(req, res));
+router.get('/rooms/:roomId/messages', (req, res) => controller.getMessages(req, res));
 
+/**
+ * Socket.IO (`path: /chat`) 이벤트 명세
+ * - handshake auth: `{ accessToken: string }`
+ * - client -> server: `chat:join`, `message:send`, `message:read`, `chat:leave`
+ * - server -> client: `chat:joined`, `message:new`, `message:read`
+ * - `message:send` payload: `{ roomId, clientMessageId, content, messageType: "TEXT" | "LINK" }`
+ * - `clientMessageId`는 재전송 시 중복 저장 방지 키로 사용합니다.
+ */
 export default router;

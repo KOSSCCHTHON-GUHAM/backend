@@ -1,115 +1,85 @@
 import { Request, Response } from 'express';
+import { boards, createId, profiles } from '../data/memoryStore';
+import { BoardDetail } from '../types/api';
+import { deletePersistedBoard, persistBoard, storeBoardImages, updatePersistedBoard } from '../services/persistence.service';
 
-/**
- * Board Controller
- * - GIVE/NEED 게시판 관련 요청을 처리합니다.
- */
+const parsePayload = (body: Record<string, unknown>): Record<string, any> => {
+  if (typeof body.payload === 'string') {
+    try { return JSON.parse(body.payload); } catch { throw new Error('payload는 유효한 JSON이어야 합니다.'); }
+  }
+  return body;
+};
+const stringArray = (value: unknown): string[] => Array.isArray(value) ? value.map(String) : [];
+const isHttpUrl = (value: string): boolean => {
+  try { return ['http:', 'https:'].includes(new URL(value).protocol); }
+  catch { return false; }
+};
+
 export class BoardController {
-  /**
-   * POST /api/boards
-   * GIVE 또는 NEED 게시글 등록
-   *
-   * @body {
-   *   type: 'GIVE' | 'NEED',
-   *   title: string,
-   *   content: string,
-   *   jobField: string,       // e.g. 'Frontend', 'Backend', 'AI'
-   *   category: string,       // e.g. 'IT/AI', 'ESG'
-   *   tags: string[],
-   * }
-   * @returns { success: boolean, board: BoardDto }
-   */
   async createBoard(req: Request, res: Response): Promise<void> {
-    const { type, title, content, jobField, category, tags } = req.body;
-
-    // TODO: 인증 미들웨어에서 userId 추출 (req.user)
-    // TODO: 입력값 유효성 검사
-    // TODO: BoardService.create() 호출하여 DB 저장
-    // TODO: AI 분석 서비스 연동 (태그 자동 추출 등 — 선택적)
-
-    res.status(201).json({
-      success: true,
-      message: '[TODO] 게시글 생성 로직 미구현',
-      data: {
-        board: {
-          id: 'board-id-placeholder',
-          type,
-          title,
-          content,
-          jobField,
-          category,
-          tags: tags ?? [],
-          authorId: 'user-id-placeholder',
-          createdAt: new Date().toISOString(),
-        },
-      },
-    });
+    try {
+      const data = parsePayload(req.body);
+      const required = ['title', 'category', 'content', 'activityRegion', 'activityMethod', 'activityHours'];
+      const recruitCount = Number(data.recruitCount);
+      if (required.some((key) => !String(data[key] ?? '').trim()) || !Number.isInteger(recruitCount) || recruitCount < 1) {
+        res.status(400).json({ success: false, error: '필수 포스팅 입력값이 누락되었습니다.' }); return;
+      }
+      if (!Array.isArray(data.giveTags) || !Array.isArray(data.needTags)) {
+        res.status(400).json({ success: false, error: 'giveTags와 needTags는 문자열 배열이어야 합니다.' }); return;
+      }
+      const relatedLinks = stringArray(data.relatedLinks);
+      if (relatedLinks.some((link) => !isHttpUrl(link))) {
+        res.status(400).json({ success: false, error: 'relatedLinks에는 HTTP(S) URL만 사용할 수 있습니다.' }); return;
+      }
+      const now = new Date().toISOString(); const boardId = createId();
+      const imageUrls = await storeBoardImages(req.user!.id, boardId, (req.files as Express.Multer.File[] | undefined) ?? []);
+      const board: BoardDetail = {
+        id: boardId, authorId: req.user!.id, title: String(data.title).trim(), category: String(data.category), recruitCount,
+        content: String(data.content), giveTags: stringArray(data.giveTags), needTags: stringArray(data.needTags),
+        activityRegion: String(data.activityRegion), activityMethod: String(data.activityMethod), activityHours: String(data.activityHours),
+        relatedLinks, imageUrls,
+        recruitment: { current: 0, target: recruitCount, status: 'RECRUITING' }, createdAt: now, updatedAt: now,
+      };
+      await persistBoard(board);
+      boards.set(board.id, board);
+      res.status(201).json({ board });
+    } catch (error) { res.status(400).json({ success: false, error: error instanceof Error ? error.message : '잘못된 요청' }); }
   }
 
-  /**
-   * GET /api/boards
-   * 직무(Frontend, Backend 등) 및 분야(IT/AI, ESG)별 게시글 목록 조회
-   *
-   * @query {
-   *   type?: 'GIVE' | 'NEED',
-   *   jobField?: string,
-   *   category?: string,
-   *   page?: number,
-   *   limit?: number,
-   * }
-   * @returns { success: boolean, boards: BoardDto[], total: number, page: number }
-   */
-  async getBoards(req: Request, res: Response): Promise<void> {
-    const { type, jobField, category, page = 1, limit = 20 } = req.query;
-
-    // TODO: 쿼리 파라미터로 필터링 조건 구성
-    // TODO: BoardService.findAll(filters, pagination) 호출
-    // TODO: 페이지네이션 처리
-
-    res.status(200).json({
-      success: true,
-      message: '[TODO] 게시글 목록 조회 로직 미구현',
-      data: {
-        boards: [],
-        total: 0,
-        page: Number(page),
-        limit: Number(limit),
-        filters: { type, jobField, category },
-      },
-    });
+  getBoards(req: Request, res: Response): void {
+    const { category, keyword, sort = 'LATEST' } = req.query;
+    const page = Math.max(1, Number(req.query.page) || 1); const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    let items = [...boards.values()].filter((board) => !category || category === 'ALL' || board.category === category)
+      .filter((board) => !keyword || `${board.title} ${board.giveTags.join(' ')} ${board.needTags.join(' ')}`.toLowerCase().includes(String(keyword).toLowerCase()));
+    if (sort === 'LATEST') items = items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    res.json({ boards: items.slice((page - 1) * limit, page * limit).map((board) => ({ ...board, author: profiles.get(board.authorId) ? { id: board.authorId, nickname: profiles.get(board.authorId)!.nickname } : undefined })), total: items.length, page, hasNext: page * limit < items.length });
   }
 
-  /**
-   * GET /api/boards/:id
-   * 게시글 상세 내용 조회
-   *
-   * @param id - 게시글 ID
-   * @returns { success: boolean, board: BoardDto }
-   */
-  async getBoardById(req: Request, res: Response): Promise<void> {
-    const { id } = req.params;
+  getBoardById(req: Request, res: Response): void {
+    const board = boards.get(req.params.id);
+    if (!board) { res.status(404).json({ success: false, error: '포스팅을 찾을 수 없습니다.' }); return; }
+    const profile = profiles.get(board.authorId);
+    res.json({ board, author: profile ? { id: profile.id, nickname: profile.nickname, giveFields: profile.giveFields } : null, permissions: { isOwner: req.user?.id === board.authorId }, imageUrls: board.imageUrls, relatedLinks: board.relatedLinks });
+  }
 
-    // TODO: BoardService.findById(id) 호출
-    // TODO: 존재하지 않는 게시글 404 처리
-    // TODO: 조회수 증가 처리
+  async updateBoard(req: Request, res: Response): Promise<void> {
+    const board = boards.get(req.params.id);
+    if (!board) { res.status(404).json({ success: false, error: '포스팅을 찾을 수 없습니다.' }); return; }
+    if (board.authorId !== req.user!.id) { res.status(403).json({ success: false, error: '수정 권한이 없습니다.' }); return; }
+    const allowed = ['title', 'category', 'recruitCount', 'content', 'giveTags', 'needTags', 'activityRegion', 'activityMethod', 'activityHours', 'relatedLinks'] as const;
+    for (const key of allowed) if (req.body[key] !== undefined) (board as any)[key] = req.body[key];
+    board.recruitment.target = Number(board.recruitCount); board.updatedAt = new Date().toISOString();
+    try { await updatePersistedBoard(board); }
+    catch (error) { res.status(500).json({ success: false, error: error instanceof Error ? error.message : '수정 실패' }); return; }
+    res.json({ board });
+  }
 
-    res.status(200).json({
-      success: true,
-      message: '[TODO] 게시글 상세 조회 로직 미구현',
-      data: {
-        board: {
-          id,
-          type: 'GIVE',
-          title: 'placeholder title',
-          content: 'placeholder content',
-          jobField: 'placeholder',
-          category: 'placeholder',
-          tags: [],
-          authorId: 'user-id-placeholder',
-          viewCount: 0,
-          createdAt: new Date().toISOString(),
-        },
-      },
-    });
+  async deleteBoard(req: Request, res: Response): Promise<void> {
+    const board = boards.get(req.params.id);
+    if (!board) { res.status(404).json({ success: false, error: '포스팅을 찾을 수 없습니다.' }); return; }
+    if (board.authorId !== req.user!.id) { res.status(403).json({ success: false, error: '삭제 권한이 없습니다.' }); return; }
+    try { await deletePersistedBoard(board.id, board.authorId); }
+    catch (error) { res.status(500).json({ success: false, error: error instanceof Error ? error.message : '삭제 실패' }); return; }
+    boards.delete(board.id); res.status(204).send();
   }
 }

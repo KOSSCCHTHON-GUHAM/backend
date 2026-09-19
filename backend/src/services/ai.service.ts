@@ -1,124 +1,77 @@
+import { lookup } from 'dns/promises';
 import aiClient from '../config/aiClient';
 
-// ────────────────────────────────────────────────────────────────────
-// 타입 정의
-// ────────────────────────────────────────────────────────────────────
-
-export interface ChatResult {
-  content: string;
-  model: string;
-  usage: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  };
+export interface AnalyzeResult { giveTags: string[]; needTags: string[]; summary: string }
+export interface DraftResult {
+  title: string; category: string; recruitCount: number; content: string;
+  giveTags: string[]; needTags: string[]; activityRegion: string;
+  activityMethod: string; activityHours: string; relatedLinks: string[]; warnings: string[];
 }
 
-export interface RecommendationDto {
-  userId: string;
-  nickname: string;
-  jobField: string;
-  matchScore: number;
-  reason: string;
-}
+const parseJson = <T>(raw: string): T => JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()) as T;
+const isPrivateAddress = (address: string): boolean => /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc|fd|fe80)/i.test(address);
 
-export interface AnalyzeResult {
-  keywords: string[];
-  summary: string;
-  type: 'GIVE' | 'NEED' | string;
-}
-
-// ────────────────────────────────────────────────────────────────────
-// AI Service
-// ────────────────────────────────────────────────────────────────────
+const fetchLinkText = async (rawUrl: string): Promise<string> => {
+  const url = new URL(rawUrl);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('HTTP(S) 링크만 지원합니다.');
+  const addresses = await lookup(url.hostname, { all: true });
+  if (addresses.some(({ address }) => isPrivateAddress(address))) throw new Error('내부 네트워크 주소는 분석할 수 없습니다.');
+  const response = await fetch(url, { headers: { 'User-Agent': 'GUHAM-LinkAnalyzer/1.0' }, redirect: 'follow', signal: AbortSignal.timeout(7000) });
+  if (!response.ok) throw new Error(`링크 응답 오류(${response.status})`);
+  const type = response.headers.get('content-type') ?? '';
+  if (!type.includes('text/html') && !type.includes('text/plain') && !type.includes('application/json')) throw new Error('텍스트 형식의 링크만 분석할 수 있습니다.');
+  return (await response.text()).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 12000);
+};
 
 export class AiService {
-  /**
-   * [GUHAM] AI 기반 GIVE/NEED 맞춤형 사용자 추천
-   *
-   * 추후 구현 방향:
-   *  1. userId로 사용자 프로필(GIVE/NEED 태그, 직무 등) 조회
-   *  2. OpenAI Embeddings API로 사용자 프로필 벡터화
-   *  3. 벡터 유사도(cosine similarity) 기반 상위 N명 반환
-   *
-   * @param userId  현재 로그인한 사용자 ID
-   * @param limit   추천 결과 수 (기본 5)
-   */
-  async getRecommendations(userId: string, limit: number = 5): Promise<RecommendationDto[]> {
-    // TODO: 실제 AI 추천 로직 구현
-    // const profile = await UserService.getProfile(userId);
-    // const embedding = await aiClient.embeddings.create({ ... });
-    // return vectorSearch(embedding, limit);
+  private readonly model = process.env.AI_MODEL || 'nova-2-lite';
 
-    // --- 더미 데이터 (개발·테스트용) ---
-    const dummy: RecommendationDto[] = Array.from({ length: limit }, (_, i) => ({
-      userId: `dummy-user-${i + 1}`,
-      nickname: `더미유저${i + 1}`,
-      jobField: ['Frontend', 'Backend', 'AI/ML', 'ESG', 'Design'][i % 5],
-      matchScore: parseFloat((0.95 - i * 0.05).toFixed(2)),
-      reason: `[TODO] AI 추천 이유 — userId: ${userId}`,
+  async analyzePost(title: string, category: string, content: string): Promise<AnalyzeResult> {
+    const response = await aiClient.chat.completions.create({ model: this.model, messages: [
+      { role: 'system', content: 'GUHAM 포스팅에서 제공 역량(GIVE)과 필요한 역량(NEED)을 표준 기술 태그로 추출한다. JSON만 반환한다: {"giveTags":string[],"needTags":string[],"summary":string}' },
+      { role: 'user', content: `제목: ${title}\n카테고리: ${category}\n내용: ${content}` },
+    ], response_format: { type: 'json_object' } });
+    return parseJson<AnalyzeResult>(response.choices[0]?.message.content ?? '{}');
+  }
+
+  async normalizeProfile(customGiveText = '', customInterestText = ''): Promise<{ normalizedGiveTags: string[]; normalizedInterestTags: string[] }> {
+    if (!customGiveText.trim() && !customInterestText.trim()) return { normalizedGiveTags: [], normalizedInterestTags: [] };
+    const response = await aiClient.chat.completions.create({ model: this.model, messages: [
+      { role: 'system', content: '사용자의 자유 입력을 간결한 한국어/영문 표준 태그로 정규화한다. JSON만 반환한다: {"normalizedGiveTags":string[],"normalizedInterestTags":string[]}' },
+      { role: 'user', content: `GIVE: ${customGiveText}\n관심 분야: ${customInterestText}` },
+    ], response_format: { type: 'json_object' } });
+    return parseJson(response.choices[0]?.message.content ?? '{}');
+  }
+
+  async createDraft(files: Express.Multer.File[], links: string[]): Promise<DraftResult> {
+    const warnings: string[] = [];
+    const linkContents = await Promise.all(links.map(async (link) => {
+      try { return `URL: ${link}\n본문: ${await fetchLinkText(link)}`; }
+      catch (error) { warnings.push(`${link}: ${error instanceof Error ? error.message : '분석 실패'}`); return `URL: ${link}`; }
     }));
-
-    return dummy;
+    const prompt = `첨부 자료를 바탕으로 팀원 모집 포스팅 초안을 작성해라. 추측이 필요한 값은 빈 문자열로 둔다. JSON만 반환한다.\n형식: {"title":string,"category":string,"recruitCount":number,"content":string,"giveTags":string[],"needTags":string[],"activityRegion":string,"activityMethod":string,"activityHours":string}\n${linkContents.join('\n\n')}`;
+    const parts: any[] = [{ type: 'text', text: prompt }];
+    for (const file of files) parts.push({ type: 'image_url', image_url: { url: `data:${file.mimetype};base64,${file.buffer.toString('base64')}` } });
+    const response = await aiClient.chat.completions.create({ model: this.model, messages: [{ role: 'user', content: parts }], response_format: { type: 'json_object' } });
+    const draft = parseJson<Omit<DraftResult, 'relatedLinks' | 'warnings'>>(response.choices[0]?.message.content ?? '{}');
+    return { ...draft, relatedLinks: links, warnings };
   }
 
-  /**
-   * [GUHAM] GIVE/NEED 텍스트 AI 분석 및 키워드 추출
-   *
-   * 추후 구현 방향:
-   *  1. OpenAI Chat Completions API에 프롬프트로 텍스트 전달
-   *  2. 키워드, 직무 분야, 요약 추출
-   *  3. 구조화된 JSON 응답 파싱 (structured output 사용 권장)
-   *
-   * @param text  분석할 GIVE 또는 NEED 텍스트
-   * @param type  'GIVE' | 'NEED'
-   */
-  async analyzeText(text: string, type: string = 'GIVE'): Promise<AnalyzeResult> {
-    // TODO: 실제 AI 분석 로직 구현
-    // const response = await aiClient.chat.completions.create({
-    //   model: 'gpt-4o-mini',
-    //   messages: [
-    //     { role: 'system', content: GUHAM_ANALYZE_SYSTEM_PROMPT },
-    //     { role: 'user', content: text },
-    //   ],
-    //   response_format: { type: 'json_object' },
-    // });
-    // return JSON.parse(response.choices[0].message.content ?? '{}');
-
-    // --- 더미 데이터 (개발·테스트용) ---
-    return {
-      keywords: ['[TODO]', 'keyword1', 'keyword2'],
-      summary: `[TODO] AI 분석 요약 — 입력 길이: ${text.length}자, 타입: ${type}`,
-      type,
-    };
+  async embedding(text: string): Promise<number[] | undefined> {
+    const model = process.env.AI_EMBEDDING_MODEL;
+    if (!model || !text.trim()) return undefined;
+    const response = await aiClient.embeddings.create({ model, input: text.slice(0, 8000) });
+    return response.data[0]?.embedding;
   }
 
-  /**
-   * OpenAI Chat Completions API 직접 호출 (기존 기능 유지)
-   */
-  async chat(message: string, model: string = process.env.AI_MODEL || 'nova-2-lite'): Promise<ChatResult> {
-    const response = await aiClient.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: message }],
-    });
-
-    const choice = response.choices[0];
-    return {
-      content: choice.message.content ?? '',
-      model: response.model,
-      usage: {
-        promptTokens: response.usage?.prompt_tokens ?? 0,
-        completionTokens: response.usage?.completion_tokens ?? 0,
-        totalTokens: response.usage?.total_tokens ?? 0,
-      },
-    };
+  async chat(message: string, model = this.model): Promise<{ content: string; model: string; usage: object }> {
+    const response = await aiClient.chat.completions.create({ model, messages: [{ role: 'user', content: message }] });
+    return { content: response.choices[0]?.message.content ?? '', model: response.model, usage: response.usage ?? {} };
   }
 
-  /**
-   * 사용 가능한 AI 모델 목록 조회 (기존 기능 유지)
-   */
   async listModels(): Promise<string[]> {
     const response = await aiClient.models.list();
-    return response.data.map((m) => m.id);
+    return response.data.map((item) => item.id);
   }
 }

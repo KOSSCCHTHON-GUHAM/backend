@@ -1,188 +1,83 @@
 import { Router } from 'express';
 import { AiController } from '../controllers/ai.controller';
+import { requireAuth } from '../middleware/auth.middleware';
+import { handleUpload } from '../middleware/upload.middleware';
+const router = Router(); const controller = new AiController();
 
-const router = Router();
-const aiController = new AiController();
-
-/**
- * @swagger
- * tags:
- *   name: AI
- *   description: AI 맞춤 추천, 텍스트 분석 및 모델 연동 API
- */
-
-/**
- * @swagger
- * /api/ai/recommend:
+/** @swagger
+ * /api/ai/recommend/boards:
  *   get:
- *     summary: AI 기반 GIVE/NEED 맞춤형 사용자 추천 (스켈레톤)
  *     tags: [AI]
+ *     summary: GIVE 의미 유사도 60%·태그 20%·지역 10%·최신성 10% 포스팅 추천
+ *     security: [{ bearerAuth: [] }]
  *     parameters:
- *       - in: query
- *         name: userId
- *         schema:
- *           type: string
- *         description: 추천 대상 사용자 ID (기본값 anonymous)
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 5
- *         description: 추천 결과 개수
- *     responses:
- *       200:
- *         description: 맞춤 추천 사용자 목록 반환 성공 (현재 더미 데이터)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     properties:
- *                       userId:
- *                         type: string
- *                         example: dummy-user-1
- *                       nickname:
- *                         type: string
- *                         example: 더미유저1
- *                       jobField:
- *                         type: string
- *                         example: Frontend
- *                       matchScore:
- *                         type: number
- *                         example: 0.95
- *                       reason:
- *                         type: string
- *                         example: '[TODO] AI 추천 이유'
+ *       - { in: query, name: category, schema: { type: string } }
+ *       - { in: query, name: keyword, schema: { type: string } }
+ *       - { in: query, name: page, schema: { type: integer, default: 1 } }
+ *       - { in: query, name: limit, schema: { type: integer, default: 20 } }
+ *     responses: { 200: { description: matchScore와 추천 이유가 포함된 포스팅 } }
  */
-router.get('/recommend', (req, res) => aiController.recommend(req, res));
-
-/**
- * @swagger
+router.get('/recommend/boards', requireAuth, (req, res) => controller.recommendBoards(req, res));
+/** @swagger
+ * /api/ai/recommend/users:
+ *   get:
+ *     tags: [AI]
+ *     summary: 포스팅 NEED와 사용자 GIVE를 비교한 후보 추천
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - { in: query, name: boardId, required: true, schema: { type: string, format: uuid } }
+ *       - { in: query, name: limit, schema: { type: integer, default: 10 } }
+ *     responses: { 200: { description: 순위·점수·일치 태그·추천 이유 }, 404: { description: 본인 포스팅 없음 } }
+ */
+router.get('/recommend/users', requireAuth, (req, res) => controller.recommendUsers(req, res));
+/** @swagger
  * /api/ai/analyze:
  *   post:
- *     summary: 작성된 GIVE/NEED 텍스트 AI 분석 및 키워드 추출 (스켈레톤)
  *     tags: [AI]
+ *     summary: 작성 내용에서 GIVE·NEED 태그 추출
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content: { application/json: { schema: { type: object, required: [title, category, content], properties: { title: { type: string }, category: { type: string }, content: { type: string } } } } }
+ *     responses: { 200: { description: GIVE·NEED 태그와 요약 } }
+ */
+router.post('/analyze', requireAuth, (req, res) => controller.analyze(req, res));
+/** @swagger
+ * /api/ai/draft:
+ *   post:
+ *     tags: [AI]
+ *     summary: 사진 최대 10장·링크를 분석해 포스팅 전체 초안 생성
+ *     security: [{ bearerAuth: [] }]
  *     requestBody:
  *       required: true
  *       content:
- *         application/json:
+ *         multipart/form-data:
  *           schema:
  *             type: object
- *             required:
- *               - text
  *             properties:
- *               text:
- *                 type: string
- *                 example: '스프링부트 백엔드 개발과 도커 배포 경험이 있습니다. 함께 프로젝트 하실 분!'
- *               type:
- *                 type: string
- *                 enum: [GIVE, NEED]
- *                 default: GIVE
- *                 example: GIVE
+ *               images: { type: array, maxItems: 10, items: { type: string, format: binary } }
+ *               links: { type: string, description: URL 문자열 배열을 JSON으로 직렬화한 값, example: '["https://example.com/contest"]' }
  *     responses:
- *       200:
- *         description: AI 텍스트 분석 결과 반환 성공 (현재 더미 데이터)
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   properties:
- *                     keywords:
- *                       type: array
- *                       items:
- *                         type: string
- *                       example: ['스프링부트', '백엔드', '도커']
- *                     summary:
- *                       type: string
- *                       example: '[TODO] AI 분석 요약'
- *                     type:
- *                       type: string
- *                       example: GIVE
+ *       200: { description: 1·2단계 전체 입력값 초안과 분석 경고, content: { application/json: { schema: { $ref: '#/components/schemas/AiDraftResponse' } } } }
+ *       400: { description: 첨부 없음·URL·파일 형식 오류, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+ *       502: { description: 외부 AI 분석 실패, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
  */
-router.post('/analyze', (req, res) => aiController.analyze(req, res));
-
-/**
- * @swagger
+router.post('/draft', requireAuth, handleUpload, (req, res) => controller.draft(req, res));
+/** @swagger
  * /api/ai/chat:
  *   post:
- *     summary: AI 직접 채팅 요청
  *     tags: [AI]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - message
- *             properties:
- *               message:
- *                 type: string
- *                 example: '안녕하세요, GUHAM 서비스에 대해 소개해 주세요.'
- *               model:
- *                 type: string
- *                 example: 'gpt-4o-mini'
- *     responses:
- *       200:
- *         description: AI 채팅 응답 성공
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   properties:
- *                     content:
- *                       type: string
- *                       example: '안녕하세요! GUHAM은 청년 인재 매칭 플랫폼입니다.'
- *                     model:
- *                       type: string
- *                       example: 'gpt-4o-mini'
- *                     usage:
- *                       type: object
+ *     summary: AI 연결 확인용 직접 채팅
+ *     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message], properties: { message: { type: string }, model: { type: string } } } } } }
+ *     responses: { 200: { description: AI 응답 } }
  */
-router.post('/chat', (req, res) => aiController.chat(req, res));
-
-/**
- * @swagger
+router.post('/chat', (req, res) => controller.chat(req, res));
+/** @swagger
  * /api/ai/models:
  *   get:
- *     summary: 사용 가능한 AI 모델 목록 조회
  *     tags: [AI]
- *     responses:
- *       200:
- *         description: 모델 목록 반환 성공
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: array
- *                   items:
- *                     type: string
- *                   example: ['gpt-4o', 'gpt-4o-mini']
+ *     summary: 사용 가능한 AI 모델 목록 조회
+ *     responses: { 200: { description: 모델 ID 목록 } }
  */
-router.get('/models', (req, res) => aiController.listModels(req, res));
-
+router.get('/models', (req, res) => controller.listModels(req, res));
 export default router;
