@@ -9,11 +9,11 @@ const createAIClient = (): OpenAI => {
   const baseURL = process.env.OPENAI_BASE_URL;
 
   if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not set in environment variables');
+    console.warn('⚠️  OPENAI_API_KEY is not set in environment variables. Using dummy client.');
   }
 
   const config: ConstructorParameters<typeof OpenAI>[0] = {
-    apiKey,
+    apiKey: apiKey || 'dummy-key',
   };
 
   if (baseURL) {
