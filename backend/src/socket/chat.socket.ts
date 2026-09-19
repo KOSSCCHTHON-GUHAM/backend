@@ -6,7 +6,14 @@ import { ChatMessage, MessageType } from '../types/api';
 import { persistChatMessage, persistChatRoomActivity, persistLastReadMessage } from '../services/persistence.service';
 
 export const createChatSocket = (server: Server): SocketServer => {
-  const origins = process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? ['http://localhost:5173'];
+  const origins = process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? [
+    'http://localhost:5173',
+    'http://localhost:8080',
+    'http://localhost:8081',
+    'http://127.0.0.1:5173',
+    'http://127.0.0.1:8080',
+    'http://127.0.0.1:8081',
+  ];
   const io = new SocketServer(server, { path: '/chat', cors: { origin: origins, credentials: true } });
   io.use(async (socket, next) => {
     const token = socket.handshake.auth?.accessToken;

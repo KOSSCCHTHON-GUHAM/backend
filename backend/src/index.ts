@@ -18,7 +18,15 @@ import { hydrateMemoryStore } from './services/persistence.service';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? ['http://localhost:5173'];
+const defaultOrigins = [
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'http://localhost:8081',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:8080',
+  'http://127.0.0.1:8081',
+];
+const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map((origin) => origin.trim()).filter(Boolean) ?? defaultOrigins;
 
 // ────────────────────────────────────────────────────────────────────
 // Middleware
