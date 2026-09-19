@@ -16,7 +16,19 @@ export class UserController {
       const profile = { id: userId, email: req.user?.email ?? previous?.email ?? '', nickname: previous?.nickname ?? '', avatarUrl: previous?.avatarUrl, giveFields, interests, regions, customGiveText, customInterestText, ...normalized, onboardingCompleted: true };
       profiles.set(userId, profile);
       const admin = getSupabaseAdmin();
-      if (admin) await admin.from('profiles').upsert({ id: userId, give_fields: giveFields, interests, regions, custom_give_text: customGiveText, custom_interest_text: customInterestText, normalized_give_tags: normalized.normalizedGiveTags, normalized_interest_tags: normalized.normalizedInterestTags, onboarding_completed: true });
+      if (admin) {
+        const { error } = await admin.from('profiles').update({
+          give_fields: giveFields,
+          interests,
+          regions,
+          custom_give_text: customGiveText,
+          custom_interest_text: customInterestText,
+          normalized_give_tags: normalized.normalizedGiveTags,
+          normalized_interest_tags: normalized.normalizedInterestTags,
+          onboarding_completed: true,
+        }).eq('id', userId);
+        if (error) throw new Error(`프로필 DB 저장 실패: ${error.message}`);
+      }
       res.json({ user: profile, ...normalized, onboardingCompleted: true });
     } catch (error) { res.status(500).json({ success: false, error: error instanceof Error ? error.message : '온보딩 저장 실패' }); }
   }
