@@ -8,7 +8,12 @@ export interface DraftResult {
   activityMethod: string; activityHours: string; relatedLinks: string[]; warnings: string[];
 }
 
-const parseJson = <T>(raw: string): T => JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()) as T;
+const parseJson = <T>(raw: string): T => {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end < start) throw new Error('AI 응답에서 JSON 객체를 찾을 수 없습니다.');
+  return JSON.parse(raw.slice(start, end + 1)) as T;
+};
 const isPrivateAddress = (address: string): boolean => /^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fc|fd|fe80)/i.test(address);
 
 const fetchLinkText = async (rawUrl: string): Promise<string> => {
@@ -25,7 +30,7 @@ const fetchLinkText = async (rawUrl: string): Promise<string> => {
 };
 
 export class AiService {
-  private readonly model = process.env.AI_MODEL || 'nova-2-lite';
+  private readonly model = process.env.AI_MODEL || 'claude-sonnet-4-6';
 
   async analyzePost(title: string, category: string, content: string): Promise<AnalyzeResult> {
     const response = await aiClient.chat.completions.create({ model: this.model, messages: [
@@ -63,6 +68,21 @@ export class AiService {
     if (!model || !text.trim()) return undefined;
     const response = await aiClient.embeddings.create({ model, input: text.slice(0, 8000) });
     return response.data[0]?.embedding;
+  }
+
+  async semanticSimilarity(left: string, right: string): Promise<number> {
+    const response = await aiClient.chat.completions.create({
+      model: this.model,
+      messages: [
+        { role: 'system', content: '두 텍스트의 팀 프로젝트 역량/관심 분야 의미 유사도를 0~1 사이 숫자로 평가한다. JSON만 반환한다: {"score":number}' },
+        { role: 'user', content: `텍스트 A:\n${left}\n\n텍스트 B:\n${right}` },
+      ],
+      response_format: { type: 'json_object' },
+    });
+    const parsed = parseJson<{ score?: number; similarity_score?: number }>(response.choices[0]?.message.content ?? '{}');
+    const score = parsed.score ?? parsed.similarity_score;
+    if (typeof score !== 'number' || !Number.isFinite(score)) throw new Error('AI 유사도 점수가 올바르지 않습니다.');
+    return Math.min(1, Math.max(0, score));
   }
 
   async chat(message: string, model = this.model): Promise<{ content: string; model: string; usage: object }> {

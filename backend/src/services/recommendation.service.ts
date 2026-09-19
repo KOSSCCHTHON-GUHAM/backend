@@ -28,8 +28,12 @@ export class RecommendationService {
     try {
       const [a, b] = await Promise.all([this.ai.embedding(left), this.ai.embedding(right)]);
       if (a && b) return Math.max(0, cosine(a, b));
-    } catch (error) { console.warn('[recommendation] embedding fallback:', error); }
-    return lexicalSimilarity(left, right);
+    } catch (error) { console.warn('[recommendation] embedding unavailable:', error); }
+    try { return await this.ai.semanticSimilarity(left, right); }
+    catch (error) {
+      console.warn('[recommendation] AI similarity fallback:', error);
+      return lexicalSimilarity(left, right);
+    }
   }
 
   async boardsForUser(userId: string, limit: number, category?: string, keyword?: string) {
