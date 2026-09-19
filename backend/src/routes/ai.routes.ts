@@ -1,8 +1,16 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { AiController } from '../controllers/ai.controller';
 
 const router = Router();
 const aiController = new AiController();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, callback) => {
+    callback(null, ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype));
+  },
+});
 
 /**
  * @swagger
@@ -67,28 +75,26 @@ router.get('/recommend', (req, res) => aiController.recommend(req, res));
  * @swagger
  * /api/ai/analyze:
  *   post:
- *     summary: 작성된 GIVE/NEED 텍스트 AI 분석 및 키워드 추출 (스켈레톤)
+ *     summary: 링크·사진을 교차 분석해 포스팅 초안 생성
  *     tags: [AI]
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
- *           schema:
+ *           multipart/form-data:
+ *             schema:
  *             type: object
- *             required:
- *               - text
  *             properties:
- *               text:
+ *               url:
  *                 type: string
- *                 example: '스프링부트 백엔드 개발과 도커 배포 경험이 있습니다. 함께 프로젝트 하실 분!'
- *               type:
+ *                 format: uri
+ *                 example: 'https://example.com/contest'
+ *               image:
  *                 type: string
- *                 enum: [GIVE, NEED]
- *                 default: GIVE
- *                 example: GIVE
+ *                 format: binary
  *     responses:
  *       200:
- *         description: AI 텍스트 분석 결과 반환 성공 (현재 더미 데이터)
+ *         description: AI 포스팅 초안 생성 성공
  *         content:
  *           application/json:
  *             schema:
@@ -100,19 +106,19 @@ router.get('/recommend', (req, res) => aiController.recommend(req, res));
  *                 data:
  *                   type: object
  *                   properties:
- *                     keywords:
+ *                     title:
+ *                       type: string
+ *                       example: 'AI 웹서비스 공모전'
+ *                     summary:
+ *                       type: string
+ *                       example: 'AI 기반 웹서비스 개발 공모전입니다.'
+ *                     needs:
  *                       type: array
  *                       items:
  *                         type: string
- *                       example: ['스프링부트', '백엔드', '도커']
- *                     summary:
- *                       type: string
- *                       example: '[TODO] AI 분석 요약'
- *                     type:
- *                       type: string
- *                       example: GIVE
+ *                       example: ['React', 'UI/UX']
  */
-router.post('/analyze', (req, res) => aiController.analyze(req, res));
+router.post('/analyze', upload.single('image'), (req, res) => aiController.analyze(req, res));
 
 /**
  * @swagger

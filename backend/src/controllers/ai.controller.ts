@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { AiService } from '../services/ai.service';
+import { SourceAnalysisService } from '../services/sourceAnalysis.service';
 
 const aiService = new AiService();
+const sourceAnalysisService = new SourceAnalysisService();
 
 /**
  * AI Controller
@@ -44,37 +46,38 @@ export class AiController {
 
   /**
    * POST /api/ai/analyze
-   * 작성된 GIVE/NEED 텍스트를 AI로 분석하여 키워드 추출
+   * 링크, 이미지, 텍스트 자료를 함께 분석해 포스팅 초안을 생성
    *
-   * @body { text: string, type: 'GIVE' | 'NEED' }
-   * @returns { success: boolean, keywords: string[], summary: string }
+   * @body multipart/form-data { url: string, image: File }
+   * @returns { success: boolean, data: PostingDraft }
    */
   async analyze(req: Request, res: Response): Promise<void> {
     try {
-      const { text, type } = req.body;
-
-      if (!text || typeof text !== 'string') {
+      const { url, model } = req.body;
+      if (!url || typeof url !== 'string' || !req.file) {
         res.status(400).json({
           success: false,
-          error: 'text 필드는 필수입니다.',
+          error: 'url과 image 파일은 모두 필수입니다.',
         });
         return;
       }
 
-      // TODO: 입력 텍스트 길이 제한 검사
-      // TODO: AiService.analyzeText() 호출
-
-      const result = await aiService.analyzeText(text, type);
+      const result = await sourceAnalysisService.createPostingDraft({
+        url,
+        image: req.file,
+        model: typeof model === 'string' ? model : undefined,
+      });
 
       res.status(200).json({
         success: true,
         data: result,
       });
     } catch (error) {
-      console.error('[AiController.analyze] Error:', error);
-      res.status(500).json({
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      const isInputError = /URL|링크|내부 서버|http 또는 https|url과 image/.test(message);
+      res.status(isInputError ? 400 : 500).json({
         success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
+        error: message,
       });
     }
   }
