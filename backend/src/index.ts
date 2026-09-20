@@ -73,7 +73,7 @@ const server = http.createServer(app); createChatSocket(server);
 const startServer = async (): Promise<void> => {
   try { await hydrateMemoryStore(); }
   catch (error) { console.error(error); process.exitCode = 1; return; }
-  server.listen(Number(PORT), '0,0,0,0' , () => {
+  server.listen(Number(PORT), '0.0.0.0' , () => {
   console.log(`🚀 Server is running on http://localhost:${PORT}`);
   console.log(`📑 Swagger Docs available at http://localhost:${PORT}/api-docs`);
   console.log(`📌 Environment: ${process.env.NODE_ENV || 'development'}`);
